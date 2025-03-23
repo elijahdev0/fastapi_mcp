@@ -8,10 +8,14 @@ __version__ = "0.1.4"
 
 from .server import add_mcp_server, create_mcp_server, mount_mcp_server
 from .http_tools import create_mcp_tools_from_openapi
+from .auth import AuthConfig, MCPAuthenticator, create_auth_dependency
 
 __all__ = [
     "add_mcp_server",
     "create_mcp_server",
     "mount_mcp_server",
     "create_mcp_tools_from_openapi",
+    "AuthConfig",
+    "MCPAuthenticator",
+    "create_auth_dependency",
 ]
