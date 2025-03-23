@@ -4,14 +4,15 @@ Server module for FastAPI-MCP.
 This module provides functionality for creating and mounting MCP servers to FastAPI applications.
 """
 
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Union
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from mcp.server.fastmcp import FastMCP
 from mcp.server.sse import SseServerTransport
 from fastapi import Request
 
 from .http_tools import create_mcp_tools_from_openapi
+from .auth import AuthConfig, MCPAuthenticator, create_auth_dependency
 
 
 def create_mcp_server(
@@ -56,6 +57,7 @@ def mount_mcp_server(
     base_url: Optional[str] = None,
     describe_all_responses: bool = False,
     describe_full_response_schema: bool = False,
+    auth_config: Optional[Union[AuthConfig, Dict[str, Any]]] = None,
 ) -> None:
     """
     Mount an MCP server to a FastAPI app.
@@ -66,8 +68,11 @@ def mount_mcp_server(
         mount_path: Path where the MCP server will be mounted
         serve_tools: Whether to serve tools from the FastAPI app
         base_url: Base URL for API requests
-        describe_all_responses: Whether to include all possible response schemas in tool descriptions. Recommended to keep False, as the LLM will probably derive if there is an error.
-        describe_full_response_schema: Whether to include full json schema for responses in tool descriptions. Recommended to keep False, as examples are more LLM friendly, and save tokens.
+        describe_all_responses: Whether to include all possible response schemas in tool descriptions.
+            Recommended to keep False, as the LLM will probably derive if there is an error.
+        describe_full_response_schema: Whether to include full json schema for responses in tool descriptions.
+            Recommended to keep False, as examples are more LLM friendly, and save tokens.
+        auth_config: Optional authentication configuration
     """
     # Normalize mount path
     if not mount_path.startswith("/"):
@@ -78,8 +83,24 @@ def mount_mcp_server(
     # Create SSE transport for MCP messages
     sse_transport = SseServerTransport(f"{mount_path}/messages/")
 
+    # Set up authentication if configured
+    authenticator = None
+    if auth_config:
+        if isinstance(auth_config, dict):
+            auth_config = AuthConfig(**auth_config)
+        authenticator = MCPAuthenticator(auth_config)
+
     # Define MCP connection handler
     async def handle_mcp_connection(request: Request):
+        # Check authentication if enabled
+        if authenticator and authenticator.config.enabled:
+            if not await authenticator.authenticate_request(request):
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid authentication credentials",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
         async with sse_transport.connect_sse(request.scope, request.receive, request._send) as streams:
             await mcp_server._mcp_server.run(
                 streams[0],
@@ -89,7 +110,18 @@ def mount_mcp_server(
 
     # Mount the MCP connection handler
     app.get(mount_path)(handle_mcp_connection)
-    app.mount(f"{mount_path}/messages/", app=sse_transport.handle_post_message)
+
+    # Handle SSE message posting with authentication if configured
+    if authenticator and authenticator.config.enabled:
+        # Create a wrapped message handler that checks authentication
+        async def authenticated_message_handler(request: Request):
+            await authenticator.authenticate_or_raise(request)
+            return await sse_transport.handle_post_message(request)
+        
+        app.post(f"{mount_path}/messages/")(authenticated_message_handler)
+    else:
+        # Use the default message handler without authentication
+        app.mount(f"{mount_path}/messages/", app=sse_transport.handle_post_message)
 
     # Serve tools from the FastAPI app if requested
     if serve_tools:
@@ -112,6 +144,7 @@ def add_mcp_server(
     base_url: Optional[str] = None,
     describe_all_responses: bool = False,
     describe_full_response_schema: bool = False,
+    auth_config: Optional[Union[AuthConfig, Dict[str, Any]]] = None,
 ) -> FastMCP:
     """
     Add an MCP server to a FastAPI app.
@@ -124,8 +157,11 @@ def add_mcp_server(
         capabilities: Optional capabilities for the MCP server
         serve_tools: Whether to serve tools from the FastAPI app
         base_url: Base URL for API requests (defaults to http://localhost:$PORT)
-        describe_all_responses: Whether to include all possible response schemas in tool descriptions. Recommended to keep False, as the LLM will probably derive if there is an error.
-        describe_full_response_schema: Whether to include full json schema for responses in tool descriptions. Recommended to keep False, as examples are more LLM friendly, and save tokens.
+        describe_all_responses: Whether to include all possible response schemas in tool descriptions.
+            Recommended to keep False, as the LLM will probably derive if there is an error.
+        describe_full_response_schema: Whether to include full json schema for responses in tool descriptions.
+            Recommended to keep False, as examples are more LLM friendly, and save tokens.
+        auth_config: Optional authentication configuration for the MCP server
 
     Returns:
         The FastMCP instance that was created and mounted
@@ -142,6 +178,7 @@ def add_mcp_server(
         base_url,
         describe_all_responses=describe_all_responses,
         describe_full_response_schema=describe_full_response_schema,
+        auth_config=auth_config,
     )
 
     return mcp_server
