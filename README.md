@@ -13,6 +13,7 @@ A zero-configuration tool for automatically exposing FastAPI endpoints as Model 
 - **Preserving schemas** of your request models and response models
 - **Preserve documentation** of all your endpoints, just as it is in Swagger
 - **Extend** - Add custom MCP tools alongside the auto-generated ones
+- **Authentication** - Secure your MCP server with various authentication methods
 
 ## Installation
 
@@ -48,6 +49,71 @@ add_mcp_server(
 ```
 
 That's it! Your auto-generated MCP server is now available at `https://app.base.url/mcp`.
+
+## Authentication
+
+FastAPI-MCP supports various authentication methods to secure your MCP server:
+
+### Simple Bearer Token Authentication
+
+```python
+from fastapi import FastAPI
+from fastapi_mcp import add_mcp_server, AuthConfig
+
+app = FastAPI()
+
+# Configure authentication with a bearer token
+auth_config = AuthConfig(
+    enabled=True,
+    bearer_token="your-secret-token"  # This should be a secure token
+)
+
+# Add MCP server with authentication
+mcp_server = add_mcp_server(
+    app,
+    mount_path="/mcp",
+    name="Authenticated MCP API",
+    auth_config=auth_config
+)
+```
+
+### API Key Authentication
+
+```python
+from fastapi_mcp import AuthConfig
+
+# Configure authentication with an API key in header
+auth_config = AuthConfig(
+    enabled=True,
+    api_key="your-api-key",
+    api_key_name="X-API-Key",
+    api_key_in="header"  # Can be "header" or "query"
+)
+```
+
+### Custom Authentication
+
+For more complex authentication scenarios, you can use a custom authentication function:
+
+```python
+from fastapi import Request
+from fastapi_mcp import AuthConfig
+
+# Define your custom authentication function
+async def my_auth_function(request: Request) -> bool:
+    # Your authentication logic here
+    # Return True if authenticated, False otherwise
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    return token == "valid-token"
+
+# Configure authentication with a custom function
+auth_config = AuthConfig(
+    enabled=True,
+    custom_auth_func=my_auth_function
+)
+```
+
+See the [examples/authenticated_server.py](examples/authenticated_server.py) and [examples/simple_bearer_auth.py](examples/simple_bearer_auth.py) for complete working examples.
 
 ## Advanced Usage
 
